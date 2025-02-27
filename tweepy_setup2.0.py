@@ -2,6 +2,9 @@ import tweepy
 import time
 import requests
 import json
+from flask import Flask
+import threading
+import os
 
 # Twitter API credentials
 api_key = "bLQ7BQ4yJaVNWZNLUYywTyWyy"
@@ -12,6 +15,9 @@ access_token_secret = "OD2Xstk3o8vLXGqzBywawTSxHKeKdSTTDVi8sHzTDfzbj"
 
 # Gemini API Key
 gemini_api_key = "AIzaSyC3gHLCPrhLLGe8HKw_9votWzeUagEnHbM"
+
+# Initialize Flask app
+app = Flask(__name__)
 
 # Initialize Tweepy client & API object
 client = tweepy.Client(bearer_token, api_key, api_secret, access_token, access_token_secret)
@@ -33,7 +39,6 @@ while True:
 if initial_mentions.data:
     start_id = initial_mentions.data[0].id
 
-
 def get_gemini_response(user_message):
     """Generate AI response using Gemini API"""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateText?key={gemini_api_key}"
@@ -53,33 +58,44 @@ def get_gemini_response(user_message):
         print("Error calling Gemini API:", e)
         return "I'm unable to provide a response right now."
 
+def check_mentions():
+    """Main loop to check mentions and reply"""
+    global start_id
+    while True:
+        try:
+            response = client.get_users_mentions(client_id, since_id=start_id)
+        except tweepy.errors.TooManyRequests:
+            print("Too many requests. Waiting for 15 minutes before retrying...")
+            time.sleep(900)  # Wait for 15 minutes
+            continue
 
-# Main loop to check mentions and reply
-while True:
-    try:
-        response = client.get_users_mentions(client_id, since_id=start_id)
-    except tweepy.errors.TooManyRequests:
-        print("Too many requests. Waiting for 15 minutes before retrying...")
-        time.sleep(900)  # Wait for 15 minutes
-        continue
+        if response.data:
+            for tweet in response.data:
+                try:
+                    print(f"Processing tweet: {tweet.text}")
 
-    if response.data:
-        for tweet in response.data:
-            try:
-                print(f"Processing tweet: {tweet.text}")
+                    # Generate AI response
+                    reply_text = get_gemini_response(tweet.text)
 
-                # Generate AI response
-                reply_text = get_gemini_response(tweet.text)
+                    # Reply to the mention
+                    client.create_tweet(in_reply_to_tweet_id=tweet.id, text=reply_text)
+                    print(f"Replied: {reply_text}")
 
-                # Reply to the mention
-                client.create_tweet(in_reply_to_tweet_id=tweet.id, text=reply_text)
-                print(f"Replied: {reply_text}")
+                    # Update last processed tweet ID
+                    start_id = tweet.id
 
-                # Update last processed tweet ID
-                start_id = tweet.id
+                except Exception as error:
+                    print("Error processing tweet:", error)
 
-            except Exception as error:
-                print("Error processing tweet:", error)
+        # Wait 10 minutes to avoid rate limits
+        time.sleep(1020)
 
-    # Wait 10 minutes to avoid rate limits
-    time.sleep(1020)
+@app.route('/')
+def index():
+    """Start checking mentions in a separate thread"""
+    threading.Thread(target=check_mentions).start()
+    return "Started checking mentions!"
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 8080))  # Default to 8080 if PORT is not set
+    app.run(host='0.0.0.0', port=port)
