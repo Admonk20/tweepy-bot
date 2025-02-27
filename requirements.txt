@@ -1,2 +1,3 @@
-tweepy
-requests
+Flask
+tweepy  # or the version you are using
+requests # or the version you are using
